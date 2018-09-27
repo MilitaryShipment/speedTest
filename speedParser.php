@@ -4,14 +4,12 @@ $params = $argv;
 
 if(!isset($params[1]) || $params[1] == 0){
     $outfile = './mssql.output.csv';
-    $mode = 0;
 }else{
     $outfile = './mysql.output.csv';
-    $mode = 1;
 }
 $file = fopen($outfile,"w");
 try{
-    $p = new Parser($mode);
+    $p = new Parser();
     fputcsv($file,$p->headers);
     foreach($p->results as $result){
         fputcsv($file,$result);
@@ -23,30 +21,55 @@ fclose($file);
 
 class Parser{
 
-    const REDTIMES_MYSQL = './redTimes.mysql.txt';
-    const REDTIMES_MSSQL = './redTimes.mssql.txt';
-    const SUSETIMES_MYSQL = './suseTimes.mysql.txt';
-    const SUSETIMES_MSSQL = './suseTimes.mssql.txt';
-    //const TIMEPAT = '/real\s\s\s\s([0-9])m([0-9])\.([0-9]{3})/';
     const TIMEPAT = '/real[ \t]+([0-9])m([0-9])\.([0-9]{3})/';
+    const RESULTPAT = '/sql.txt/';
+    const HOSTPAT = '/(.*).[a-z]{2}sql.txt/';
+    const RESULTDIR = './';
+    const FINALHEADER = 'PERCENT_DIFF';
 
-    protected $redTimes;
-    protected $suseTimes;
-    public $headers = array('SUSE_TIME','RED_TIME','PERCENT_DIFF');
+    protected $serverALabel;
+    protected $serverBLabel;
+    protected $serverATimes;
+    protected $serverBTimes;
+    protected $resultFiles = array();
+    protected $hosts = array();
+    public $headers = array();
     public $results = array();
 
-    public function __construct($mode = 0)
+    public function __construct()
     {
-        if(!$mode){
-            $files = array(self::SUSETIMES_MSSQL,self::REDTIMES_MSSQL);
-        }else{
-            $files = array(self::SUSETIMES_MYSQL,self::REDTIMES_MYSQL);
-        }
-        foreach($files as $file){
+        $this->_scanFiles()->_parseHosts()->_buildHeaders();
+        foreach($this->resultFiles as $file){
             $this->_loadTimes($file);
         }
         $this->_calculate();
 
+    }
+    protected function _scanFiles(){
+        $results = scandir(self::RESULTDIR);
+        foreach($results as $res){
+            if(preg_match(self::RESULTPAT,$res)){
+                $this->resultFiles[] = $res;
+            }
+        }
+        $this->serverALabel = $this->resultFiles[0];
+        $this->serverBLabel = $this->resultFiles[1];
+        return $this;
+    }
+    protected function _parseHosts(){
+        foreach($this->resultFiles as $file){
+            if(preg_match(self::HOSTPAT,$file,$matches)){
+                $this->hosts[] = $matches[1];
+            }
+        }
+        return $this;
+    }
+    protected function _buildHeaders(){
+        foreach($this->hosts as $host){
+            $this->headers[] = $host;
+        }
+        $this->headers[] = self::FINALHEADER;
+        return $this;
     }
     protected function _loadTimes($fileName){
         $lines = file($fileName);
@@ -56,11 +79,13 @@ class Parser{
                 $times[] = $timeStr;
             }
         }
-        if($fileName == self::REDTIMES_MYSQL || $fileName == self::REDTIMES_MSSQL){
-            $this->redTimes = $times;
-        }elseif($fileName == self::SUSETIMES_MYSQL || $fileName == self::SUSETIMES_MSSQL){
-            $this->suseTimes = $times;
+        if($fileName == $this->serverALabel){
+            $this->serverATimes = $times;
+        }elseif($fileName == $this->serverBLabel){
+            $this->serverBTimes = $times;
         }else{
+            echo $fileName . "\n";
+            print_r($this->resultFiles);
             throw new Exception('Invalid Option');
         }
         return $this;
@@ -73,12 +98,12 @@ class Parser{
         return false;
     }
     protected function _calculate(){
-        if(count($this->redTimes) != count($this->suseTimes)){
+        if(count($this->serverATimes) != count($this->serverBTimes)){
             throw new Exception('Time Arrays Do not match.');
         }
-        for($i = 0; $i < count($this->redTimes); $i++){
-            $percent = round((($this->suseTimes[$i] / $this->redTimes[$i]) * 100) - 100,2);
-            $this->results[] = array($this->suseTimes[$i],$this->redTimes[$i],$percent);
+        for($i = 0; $i < count($this->serverBTimes); $i++){
+            $percent = round((($this->serverATimes[$i] / $this->serverBTimes[$i]) * 100) - 100,2);
+            $this->results[] = array($this->serverATimes[$i],$this->serverBTimes[$i],$percent);
         }
         return $this;
     }
